@@ -16,7 +16,7 @@ package merkletree_test
 import (
 	"fmt"
 
-	merkletree "github.com/wealdtech/go-merkletree"
+	merkletree "github.com/razor-network/go-merkletree"
 )
 
 // Example using the Merkle tree to generate and verify proofs.
