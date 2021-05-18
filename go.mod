@@ -1,4 +1,4 @@
-module github.com/wealdtech/go-merkletree
+module github.com/razor-network/go-merkletree
 
 require (
 	github.com/CurtisLusmore/ghp v0.0.0-20190131093722-04a23b486a62 // indirect
