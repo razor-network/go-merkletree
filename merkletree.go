@@ -46,7 +46,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/wealdtech/go-merkletree/blake2b"
+	"github.com/wealdtech/go-merkletree/v2/blake2b"
 )
 
 // MerkleTree is the structure for the Merkle tree.
