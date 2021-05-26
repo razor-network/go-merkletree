@@ -47,6 +47,10 @@ type MerkleTree struct {
 	data [][]byte
 	// nodes are the leaf and branch nodes of the Merkle tree
 	nodes [][]byte
+	// depth is the depth of the tree
+	depth int
+	// rows denote the leaves in every level
+	rows [][][]byte
 }
 
 // DOT creates a DOT representation of the tree.  It is generally used for external presentation.
@@ -134,6 +138,39 @@ func (t *MerkleTree) GenerateProof(data []byte) (*Proof, error) {
 	return newProof(hashes, index), nil
 }
 
+// GenerateProofV1 generates the proof for a piece of data that is verifiable on solidity.
+// If the data is not present in the tree this will return an error.
+// If the data is present in the tree this will return the hashes for each level in the tree and details of if the hashes returned
+// are the left-hand or right-hand hashes at each level (true if the left-hand, false if the right-hand).
+func (t *MerkleTree) GenerateProofV1(index int) (*Proof, error) {
+	var compactProofPath [][]byte
+	for currentLevel := t.Depth(); currentLevel > 0; currentLevel-- {
+		currentLevelNodes := t.Level(currentLevel)
+		currentLevelCount := len(currentLevelNodes)
+
+		if index == currentLevelCount - 1 && currentLevelCount % 2 == 1 {
+			index = int(math.Floor(float64(index)/2))
+			continue
+		}
+
+		if index % 2 != 0 {
+			compactProofPath = append(compactProofPath, currentLevelNodes[index - 1])
+		} else {
+			compactProofPath = append(compactProofPath, currentLevelNodes[index + 1])
+		}
+		index = int(math.Floor(float64(index)/2))
+	}
+	return &Proof{
+		Hashes: compactProofPath,
+		Index:  uint64(index),
+	}, nil
+}
+
+func (t *MerkleTree) Level(nodeLevelIndex int) [][]byte {
+	return t.rows[nodeLevelIndex]
+}
+
+
 // New creates a new Merkle tree using the provided raw data and default hash type.
 // data must contain at least one element for it to be valid.
 func New(data [][]byte) (*MerkleTree, error) {
@@ -160,8 +197,16 @@ func NewUsing(data [][]byte, hash HashType, salt []byte) (*MerkleTree, error) {
 		}
 	}
 	// Branches
+	formatter := HexFormatter{}
+
 	for i := branchesLen - 1; i > 0; i-- {
-		nodes[i] = hash.Hash(append(nodes[i*2], nodes[i*2+1]...))
+		elm1 := formatter.Format(nodes[i*2])
+		elm2 := formatter.Format(nodes[i*2+1])
+		if elm1 < elm2 {
+			nodes[i] = hash.Hash(append(nodes[i*2], nodes[i*2+1]...))
+		} else {
+			nodes[i] = hash.Hash(append(nodes[i*2+1], nodes[i*2]...))
+		}
 	}
 
 	tree := &MerkleTree{
@@ -174,12 +219,92 @@ func NewUsing(data [][]byte, hash HashType, salt []byte) (*MerkleTree, error) {
 	return tree, nil
 }
 
+// NewUsingV1 creates a new Merkle tree that is verifiable in solidity using the provided raw data and supplied hash type.
+// data must contain at least one element for it to be valid.
+func NewUsingV1(data [][]byte, hash HashType, salt []byte) (*MerkleTree, error) {
+	if len(data) == 0 {
+		return nil, errors.New("tree must have at least 1 piece of data")
+	}
+	depth := calculateTreeDepth(data)
+	rows := make([][][]byte, depth+1)
+
+	for _, datum := range data {
+		if salt == nil {
+			rows[depth] = append(rows[depth], hash.Hash(datum))
+		} else {
+			rows[depth] = append(rows[depth], hash.Hash(append(datum, salt...)))
+		}
+	}
+
+	for i := depth - 1; i >= 0; i-- {
+		rows[i] = getNodes(rows[i+1], hash)
+	}
+
+	//TODO: Construct tree as well by providing appropriate values to 'nodes'
+	tree := &MerkleTree{
+		salt:  salt,
+		hash:  hash.Hash,
+		nodes: nil,
+		data:  data,
+		rows: rows,
+		depth: depth,
+	}
+
+	return tree, nil
+}
+
+func getNodes(leaves [][]byte, hash HashType) [][]byte {
+	remainder := len(leaves) % 2
+	formatter := HexFormatter{}
+
+	sizeOfNodes := len(leaves)/2
+	if remainder == 1 {
+		sizeOfNodes += 1
+	}
+	nodes := make([][]byte, sizeOfNodes )
+
+	for i := 0; i < len(leaves) - 1; i+=2 {
+		var hashValue []byte
+		elm1 := formatter.Format(leaves[i])
+		elm2 := formatter.Format(leaves[i+1])
+		if elm1 < elm2 {
+			hashValue = hash.Hash(append(leaves[i], leaves[i+1]...))
+		} else {
+			hashValue = hash.Hash(append(leaves[i+1], leaves[i]...))
+		}
+		nodes[i/2] = hashValue
+	}
+	if remainder == 1 {
+		nodes[((len(leaves) - remainder) / 2)] = leaves[len(leaves) - 1]
+	}
+	return nodes
+}
+
+
+func calculateTreeDepth(data [][]byte) int {
+	depth := 0
+	for ;int(math.Exp2(float64(depth))) < len(data); {
+		depth++
+	}
+	return depth
+}
+
 // Root returns the Merkle root (hash of the root node) of the tree.
 func (t *MerkleTree) Root() []byte {
 	return t.nodes[1]
 }
 
+// RootV1 returns the Merkle root (hash of the root node) of the tree.
+func (t *MerkleTree) RootV1() []byte {
+	return t.rows[0][0]
+}
+
 // String implements the stringer interface
 func (t *MerkleTree) String() string {
 	return fmt.Sprintf("%x", t.nodes[1])
+}
+
+// Depth returns the depth of the merkle tree
+func (t *MerkleTree) Depth() int {
+	return t.depth
 }
